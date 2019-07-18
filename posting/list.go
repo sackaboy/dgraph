@@ -28,7 +28,6 @@ import (
 
 	bpb "github.com/dgraph-io/badger/pb"
 	"github.com/dgraph-io/dgo/protos/api"
-	"github.com/dgraph-io/dgo/y"
 	"github.com/dgraph-io/dgraph/algo"
 	"github.com/dgraph-io/dgraph/codec"
 	"github.com/dgraph-io/dgraph/protos/pb"
@@ -399,71 +398,44 @@ func (l *List) addMutation(ctx context.Context, txn *Txn, t *pb.DirectedEdge) er
 	return l.addMutationInternal(ctx, txn, t)
 }
 
-func (l *List) addMutationInternal(ctx context.Context, txn *Txn, t *pb.DirectedEdge) error {
-	l.AssertLock()
-
-	if txn.ShouldAbort() {
-		return y.ErrConflict
-	}
+// create a new posting,
+//    whose startTs is the txn startTs
+//    for value typed postings, finger print the value and set it to uid
+// update the mutation layer with the posting
+// calculate and set the conflict key for the posting
+func (l *List) addMutationInternal(ctx context.Context, txn *Txn, edge *pb.DirectedEdge) error {
+	posting := NewPosting(edge)
+	posting.StartTs = txn.StartTs
+	fingerPrintPosting(posting, edge)
+	l.updateMutationLayer(posting)
 
 	getKey := func(key []byte, uid uint64) string {
 		return fmt.Sprintf("%s|%d", key, uid)
 	}
 
-	mpost := NewPosting(t)
-	mpost.StartTs = txn.StartTs
-	if mpost.PostingType != pb.Posting_REF {
-		t.ValueId = fingerprintEdge(t)
-		mpost.Uid = t.ValueId
-	}
-	l.updateMutationLayer(mpost)
-
-	// We ensure that commit marks are applied to posting lists in the right
-	// order. We can do so by proposing them in the same order as received by the Oracle delta
-	// stream from Zero, instead of in goroutines.
-	var conflictKey string
 	pk := x.Parse(l.key)
+
+	var conflictKey string
 	switch {
-	case schema.State().HasUpsert(t.Attr):
-		// Consider checking to see if a email id is unique. A user adds:
-		// <uid> <email> "email@email.org", and there's a string equal tokenizer
-		// and upsert directive on the schema.
-		// Then keys are "<email> <uid>" and "<email> email@email.org"
-		// The first key won't conflict, because two different UIDs can try to
-		// get the same email id. But, the second key would. Thus, we ensure
-		// that two users don't set the same email id.
+	case schema.State().HasUpsert(edge.Attr):
 		conflictKey = getKey(l.key, 0)
-
-	case pk.IsData() && schema.State().IsList(t.Attr):
-		// Data keys, irrespective of whether they are UID or values, should be judged based on
-		// whether they are lists or not. For UID, t.ValueId = UID. For value, t.ValueId =
-		// fingerprint(value) or could be fingerprint(lang) or something else.
-		//
-		// For singular uid predicate, like partner: uid // no list.
-		// a -> b
-		// a -> c
-		// Run concurrently, only one of them should succeed.
-		// But for friend: [uid], both should succeed.
-		//
-		// Similarly, name: string
-		// a -> "x"
-		// a -> "y"
-		// This should definitely have a conflict.
-		// But, if name: [string], then they can both succeed.
-		conflictKey = getKey(l.key, t.ValueId)
-
-	case pk.IsData(): // NOT a list. This case must happen after the above case.
+	case pk.IsData() && !schema.State().IsList(edge.Attr):
 		conflictKey = getKey(l.key, 0)
-
-	case pk.IsIndex() || pk.IsCount():
-		// Index keys are by default of type [uid].
-		conflictKey = getKey(l.key, t.ValueId)
-
-	default:
-		// Don't assign a conflictKey.
+	case pk.IsCount() || pk.IsIndex():
+		// we allow mulitple different uids to be updating the same count or index key
+		// but not mulitple entries of the same uid under the same count key
+		// or the same index key (potentially one is setting and the other is deleting)
+		conflictKey = getKey(l.key, posting.Uid)
 	}
+
 	txn.addConflictKey(conflictKey)
 	return nil
+}
+
+func fingerPrintPosting(posting *pb.Posting, edge *pb.DirectedEdge) {
+	if posting.PostingType != pb.Posting_REF {
+		posting.Uid = fingerprintEdge(edge)
+	}
 }
 
 // getMutation returns a marshaled version of posting list mutation stored internally.

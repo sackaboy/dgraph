@@ -779,8 +779,8 @@ func rebuildCountIndex(ctx context.Context, rb *IndexRebuild) error {
 	// keep retrying until it succeed
 	fn := func(uid uint64, pl *List, txn *Txn) error {
 		edge := &pb.DirectedEdge{
-			Entity: uid,
-			Attr:   rb.Attr,
+			ValueId: uid,
+			Attr:    rb.Attr,
 		}
 		// get the number of outgoing edges in the pl
 		countEdges := pl.Length(rb.StartTs, 0)
