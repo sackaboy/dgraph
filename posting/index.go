@@ -787,25 +787,15 @@ func rebuildCountIndex(ctx context.Context, rb *IndexRebuild) error {
 	// we need to first build the forward count index and then the reverse count index
 	// the count index indicates how many outgoing edges does a node have along the provided
 	// predicate
+	// keep retrying until it succeed
 	fn := func(uid uint64, pl *List, txn *Txn) error {
-		t := &pb.DirectedEdge{
-			ValueId: uid,
-			Attr:    rb.Attr,
-			Op:      pb.DirectedEdge_SET,
+		edge := &pb.DirectedEdge{
+			Entity: uid,
+			Attr:   rb.Attr,
 		}
-		sz := pl.Length(rb.StartTs, 0)
-		if sz == -1 {
-			return nil
-		}
-		for {
-			err := txn.addCountMutation(ctx, t, uint32(sz), reverse)
-			switch err {
-			case ErrRetry:
-				time.Sleep(10 * time.Millisecond)
-			default:
-				return err
-			}
-		}
+		// get the number of outgoing edges in the pl
+		countEdges := pl.Length(rb.StartTs, 0)
+		txn.addCountMutation(ctx, edge, countEdges, reverse)
 	}
 
 	// Create the forward index.
