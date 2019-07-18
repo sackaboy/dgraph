@@ -254,22 +254,11 @@ func (l *List) handleDeleteAll(ctx context.Context, edge *pb.DirectedEdge,
 // build the key with attr(optionally reverse) + count
 // read the posting list from the txn
 // add the mutation to the mutation map
-func (txn *Txn) addCountMutation(ctx context.Context, t *pb.DirectedEdge, count uint32,
+func (txn *Txn) addCountMutation(ctx context.Context, edge *pb.DirectedEdge, count uint32,
 	reverse bool) error {
-	key := x.CountKey(t.Attr, count, reverse)
-	plist, err := txn.Get(key)
-	if err != nil {
-		return err
-	}
-
-	x.AssertTruef(plist != nil, "plist is nil [%s] %d",
-		t.Attr, t.ValueId)
-	if err = plist.addMutation(ctx, txn, t); err != nil {
-		return err
-	}
-	ostats.Record(ctx, x.NumEdges.M(1))
-	return nil
-
+	key := x.CountKey(edge.Attr, count, reverse)
+	plist, _ := txn.Get(key)
+	plist.addMutation(ctx, txn, edge)
 }
 
 func (txn *Txn) updateCount(ctx context.Context, params countParams) error {
