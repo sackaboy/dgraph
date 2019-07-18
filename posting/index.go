@@ -251,6 +251,9 @@ func (l *List) handleDeleteAll(ctx context.Context, edge *pb.DirectedEdge,
 	return l.addMutation(ctx, txn, edge)
 }
 
+// build the key with attr(optionally reverse) + count
+// read the posting list from the txn
+// add the mutation to the mutation map
 func (txn *Txn) addCountMutation(ctx context.Context, t *pb.DirectedEdge, count uint32,
 	reverse bool) error {
 	key := x.CountKey(t.Attr, count, reverse)
@@ -777,6 +780,13 @@ func rebuildCountIndex(ctx context.Context, rb *IndexRebuild) error {
 
 	glog.Infof("Rebuilding count index for %s", rb.Attr)
 	var reverse bool
+	// in the rebuild function
+	// create an edge using the attribute in the rebuild
+	// the edge has a value id of uid
+	// the count will be determined by the number of elements after the given startTs
+	// we need to first build the forward count index and then the reverse count index
+	// the count index indicates how many outgoing edges does a node have along the provided
+	// predicate
 	fn := func(uid uint64, pl *List, txn *Txn) error {
 		t := &pb.DirectedEdge{
 			ValueId: uid,
