@@ -260,34 +260,40 @@ type ListOptions struct {
 }
 
 // NewPosting takes the given edge and returns its equivalent representation as a posting.
+// create a new posting based on the edge
+// a posting is basically a value or a uid, with associated types
+// together with the intended operation to be applied
 func NewPosting(t *pb.DirectedEdge) *pb.Posting {
-	var op uint32
-	if t.Op == pb.DirectedEdge_SET {
-		op = Set
-	} else if t.Op == pb.DirectedEdge_DEL {
-		op = Del
-	} else {
-		x.Fatalf("Unhandled operation: %+v", t)
-	}
-
-	var postingType pb.Posting_PostingType
-	if len(t.Lang) > 0 {
-		postingType = pb.Posting_VALUE_LANG
-	} else if t.ValueId == 0 {
-		postingType = pb.Posting_VALUE
-	} else {
-		postingType = pb.Posting_REF
-	}
-
 	return &pb.Posting{
 		Uid:         t.ValueId,
 		Value:       t.Value,
 		ValType:     t.ValueType,
-		PostingType: postingType,
+		PostingType: getPostingType(t),
 		LangTag:     []byte(t.Lang),
 		Label:       t.Label,
-		Op:          op,
 		Facets:      t.Facets,
+		Op:          getPostingOp(t),
+	}
+}
+
+func getPostingOp(edge *pb.DirectedEdge) uint32 {
+	if edge.Op == pb.DirectedEdge_SET {
+		return Set
+	} else if edge.Op == pb.DirectedEdge_DEL {
+		return Del
+	} else {
+		x.Fatalf("unknown edge.Op %v", edge.Op)
+		return 0
+	}
+}
+
+func getPostingType(edge *pb.DirectedEdge) pb.Posting_PostingType {
+	if len(edge.Lang) > 0 {
+		return pb.Posting_VALUE_LANG
+	} else if edge.ValueId == 0 {
+		return pb.Posting_VALUE
+	} else {
+		return pb.Posting_REF
 	}
 }
 
