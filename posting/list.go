@@ -301,28 +301,26 @@ func hasDeleteAll(mpost *pb.Posting) bool {
 }
 
 // Ensure that you either abort the uncommitted postings or commit them before calling me.
+
+// the same List can host multiple concurrent txn updates
+
+// if mpost is meant to delete all
+// update the mutationMap to have an single posting at the given timestamp
+
+// otherwise if there is no exsting entry at the given timestamp
+// insert a single entry PostingList at the given timestamp
+//
+// upsert (update or insert) the the new posting into the posting list
 func (l *List) updateMutationLayer(mpost *pb.Posting) {
-	l.AssertLock()
-	x.AssertTrue(mpost.Op == Set || mpost.Op == Del)
-
-	// If we have a delete all, then we replace the map entry with just one.
-	if hasDeleteAll(mpost) {
-		plist := &pb.PostingList{}
-		plist.Postings = append(plist.Postings, mpost)
-		l.mutationMap[mpost.StartTs] = plist
-		return
-	}
-
 	plist, ok := l.mutationMap[mpost.StartTs]
-	if !ok {
-		plist := &pb.PostingList{}
+	if hasDeleteAll(mpost) || !ok {
+		plist = &pb.PostingList{}
 		plist.Postings = append(plist.Postings, mpost)
 		l.mutationMap[mpost.StartTs] = plist
-		return
 	}
-	// Even if we have a delete all in this transaction, we should still pick up any updates since.
-	for i, prev := range plist.Postings {
-		if prev.Uid == mpost.Uid {
+
+	for i, p := range plist.Postings {
+		if p.Uid == mpost.Uid {
 			plist.Postings[i] = mpost
 			return
 		}
