@@ -142,6 +142,9 @@ func detectPendingTxns(attr string) error {
 // We don't support schema mutations across nodes in a transaction.
 // Wait for all transactions to either abort or complete and all write transactions
 // involving the predicate are aborted until schema mutations are done.
+
+// a proposal can ask to drop all the data, or data + schema, or types
+//
 func (n *node) applyMutations(ctx context.Context, proposal *pb.Proposal) (rerr error) {
 	span := otrace.FromContext(ctx)
 
