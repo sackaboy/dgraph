@@ -108,6 +108,8 @@ func (txn *Txn) addIndexMutations(ctx context.Context, info *indexMutationInfo) 
 	return nil
 }
 
+// if you don't already have the List, you need to apply a mutation through the txn
+// otherwise the mutation can be added to the current List
 func (txn *Txn) addIndexMutation(ctx context.Context, edge *pb.DirectedEdge,
 	token string) error {
 	key := x.IndexKey(edge.Attr, token)
@@ -197,55 +199,58 @@ func (txn *Txn) addReverseMutation(ctx context.Context, t *pb.DirectedEdge) erro
 	return nil
 }
 
+// get the edge to be deleted Attr + Entity (uid)
+// iterate through the list to calculate the number of outgoing edges from the
+// current node in order to figure out the count key
+
+// say the current edge has a reverse edge, we need to delete the reverse link as well
+// as we iterate through the list and found reverse edges,
+// we add a delete operation for the reverse edge
+
+// if the predicate is indexed, we read all the values, figure out the index keys and
+// add mutations to do deletions from those indexed keys
 func (l *List) handleDeleteAll(ctx context.Context, edge *pb.DirectedEdge,
 	txn *Txn) error {
-	isReversed := schema.State().IsReversed(edge.Attr)
-	isIndexed := schema.State().IsIndexed(edge.Attr)
 	hasCount := schema.State().HasCount(edge.Attr)
-	delEdge := &pb.DirectedEdge{
-		Attr:   edge.Attr,
-		Op:     edge.Op,
-		Entity: edge.Entity,
+	hasIndex := schema.State().IsIndexed(edge.Attr)
+	hasReverse := schema.State().IsReversed(edge.Attr)
+
+	// calculate the number of outgoing edges
+	if hasCount {
+		var outEdges uint32
+		l.Iterate(txn.StartTs, 0, func(p *pb.Posting) error {
+			outEdges++
+		})
+		txn.addCountMutation(ctx, &pb.DirectedEdge{
+			ValueId: edge.Entity,
+			Attr:    edge.Attr,
+			Op:      pb.DirectedEdge_DEL,
+		}, outEdges, false)
 	}
-	// To calculate length of posting list. Used for deletion of count index.
-	var plen int
-	err := l.Iterate(txn.StartTs, 0, func(p *pb.Posting) error {
-		plen++
-		switch {
-		case isReversed:
-			// Delete reverse edge for each posting.
-			delEdge.ValueId = p.Uid
-			return txn.addReverseMutation(ctx, delEdge)
-		case isIndexed:
-			// Delete index edge of each posting.
-			val := types.Val{
-				Tid:   types.TypeID(p.ValType),
-				Value: p.Value,
-			}
-			return txn.addIndexMutations(ctx, &indexMutationInfo{
+
+	if hasIndex {
+		// for each found value, add a deletion on the corresponding index key
+		l.Iterate(txn.StartTs, 0, func(p *pb.Posting) error {
+			txn.addIndexMutations(ctx, &indexMutationInfo{
 				tokenizers: schema.State().Tokenizer(edge.Attr),
 				edge:       edge,
-				val:        val,
-				op:         pb.DirectedEdge_DEL,
+				val: types.Val{
+					Tid:   types.TypeID(p.ValType),
+					Value: p.Value,
+				},
+				op: pb.DirectedEdge_DEL,
 			})
-		default:
 			return nil
-		}
-	})
-	if err != nil {
-		return err
+		})
 	}
-	if hasCount {
-		// Delete uid from count index. Deletion of reverses is taken care by addReverseMutation
-		// above.
-		if err := txn.updateCount(ctx, countParams{
-			attr:        edge.Attr,
-			countBefore: plen,
-			countAfter:  0,
-			entity:      edge.Entity,
-		}); err != nil {
-			return err
-		}
+
+	if hasReverse {
+		// find all the remote uids, and remove the reverse edge
+		l.Iterate(txn.StartTs, 0, func(p *pb.Posting) error {
+			edge.ValueId = p.Uid
+			txn.addReverseMutation(ctx, edge)
+			return nil
+		})
 	}
 
 	return l.addMutation(ctx, txn, edge)
