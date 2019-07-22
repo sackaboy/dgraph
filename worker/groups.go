@@ -798,6 +798,12 @@ OUTER:
 
 // processOracleDeltaStream is used to process oracle delta stream from Zero.
 // Zero sends information about aborted/committed transactions and maxPending.
+
+// for every second, we do a blockingReceiveAndPropose
+
+// in each blockingReceiveAndPropose
+//   get a connection to the zero leader
+//
 func (g *groupi) processOracleDeltaStream() {
 	defer g.closer.Done() // CLOSER:1
 
